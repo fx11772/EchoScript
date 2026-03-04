@@ -46,7 +46,7 @@ Example workflow:
 Clone the repository:
 
 ```bash
-git clone https://github.com/YOUR_USERNAME/EchoScript.git
+git clone https://github.com/fx11772/EchoScript.git
 cd EchoScript
 ```
 
