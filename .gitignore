@@ -1,0 +1,11 @@
+.env
+.venv/
+venv/
+__pycache__/
+*.pyc
+audio_files/
+transcripts/
+resume/
+_chunks/
+.DS_Store
+.python_version
