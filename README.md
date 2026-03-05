@@ -181,6 +181,39 @@ python transcribe_folder.py ./conference_recordings --lang auto
 
 ---
 
+# CI/CD (GitHub Actions)
+
+This repository includes an automated CI/CD pipeline at:
+
+`/.github/workflows/ci-cd.yml`
+
+## Continuous Integration
+
+On every pull request to `main` and every push to `main`, GitHub Actions:
+
+1. Runs on Python `3.11` and `3.12`
+2. Installs `ffmpeg`
+3. Installs Python dependencies (`openai`, `pydub`)
+4. Runs test suite:
+
+```bash
+python -m unittest discover -s tests -p 'test_*.py' -q
+```
+
+## Continuous Delivery
+
+- Push to `main`: creates and uploads a build artifact (`.tar.gz`) in the workflow run.
+- Push a version tag like `v1.0.0`: creates a GitHub Release and uploads the packaged bundle.
+
+Create and push a release tag:
+
+```bash
+git tag v1.0.0
+git push origin v1.0.0
+```
+
+---
+
 # Possible Improvements
 
 Future enhancements could include:

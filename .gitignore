@@ -9,3 +9,5 @@ resume/
 _chunks/
 .DS_Store
 .python_version
+*.md
+!README.md
