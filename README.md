@@ -181,6 +181,28 @@ python transcribe_folder.py ./conference_recordings --lang auto
 
 ---
 
+# Robustness Options
+
+Skip already-transcribed files by default (resumable runs):
+
+```bash
+python transcribe_folder.py ./conference_recordings
+```
+
+Force regeneration of existing transcript files:
+
+```bash
+python transcribe_folder.py ./conference_recordings --overwrite
+```
+
+Keep temporary chunk files for debugging (default behavior is cleanup):
+
+```bash
+python transcribe_folder.py ./conference_recordings --keep-chunks
+```
+
+---
+
 # CI/CD (GitHub Actions)
 
 This repository includes an automated CI/CD pipeline at:

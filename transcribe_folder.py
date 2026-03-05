@@ -1,12 +1,15 @@
 import os
 import sys
 import argparse
+import time
 from pathlib import Path
 from openai import OpenAI
 from pydub import AudioSegment
 
 CHUNK_MINUTES = 10
 SUPPORTED_EXTS = {".m4a", ".mp3", ".wav", ".aac", ".webm", ".mp4"}
+MAX_RETRY_ATTEMPTS = 3
+RETRY_BACKOFF_SECONDS = 1.0
 
 def split_audio_to_chunks(audio_path: Path, workdir: Path) -> list[Path]:
     audio = AudioSegment.from_file(str(audio_path))
@@ -22,17 +25,42 @@ def split_audio_to_chunks(audio_path: Path, workdir: Path) -> list[Path]:
     return chunks
 
 def transcribe_chunk(client: OpenAI, chunk_path: Path, lang: str | None, prompt: str | None) -> str:
-    with open(chunk_path, "rb") as f:
-        kwargs = {"model": "gpt-4o-mini-transcribe", "file": f}
-        if lang:
-            kwargs["language"] = lang
-        if prompt:
-            kwargs["prompt"] = prompt
-        result = client.audio.transcriptions.create(**kwargs)
-    return result.text
+    for attempt in range(1, MAX_RETRY_ATTEMPTS + 1):
+        try:
+            with open(chunk_path, "rb") as f:
+                kwargs = {"model": "gpt-4o-mini-transcribe", "file": f}
+                if lang:
+                    kwargs["language"] = lang
+                if prompt:
+                    kwargs["prompt"] = prompt
+                result = client.audio.transcriptions.create(**kwargs)
+            return result.text
+        except Exception as exc:
+            if attempt == MAX_RETRY_ATTEMPTS:
+                raise RuntimeError(
+                    f"Failed to transcribe chunk {chunk_path.name} after {MAX_RETRY_ATTEMPTS} attempts"
+                ) from exc
+            delay = RETRY_BACKOFF_SECONDS * (2 ** (attempt - 1))
+            print(f"  Retry {attempt}/{MAX_RETRY_ATTEMPTS - 1} in {delay:.1f}s after error: {exc}")
+            time.sleep(delay)
+    raise RuntimeError(f"Unexpected retry flow for chunk {chunk_path.name}")
 
-def transcribe_file(client: OpenAI, audio_path: Path, out_dir: Path, lang_mode: str, prompt: str | None):
+def transcribe_file(
+    client: OpenAI,
+    audio_path: Path,
+    out_dir: Path,
+    lang_mode: str,
+    prompt: str | None,
+    cleanup_chunks: bool = True,
+    overwrite: bool = False,
+):
     out_dir.mkdir(parents=True, exist_ok=True)
+    out_path = out_dir / f"{audio_path.stem}.txt"
+    if out_path.exists() and not overwrite:
+        print(f"\n==> {audio_path.name} (lang={lang_mode})")
+        print(f"Skipping: {out_path} already exists (use --overwrite to regenerate)")
+        return
+
     tmp_dir = out_dir / "_chunks"
     tmp_dir.mkdir(parents=True, exist_ok=True)
 
@@ -43,14 +71,22 @@ def transcribe_file(client: OpenAI, audio_path: Path, out_dir: Path, lang_mode: 
     print(f"Chunks: {len(chunks)} (~{CHUNK_MINUTES} min each)")
 
     parts: list[str] = []
-    for idx, ch in enumerate(chunks, start=1):
-        print(f"  Transcribing chunk {idx}/{len(chunks)}")
-        parts.append(transcribe_chunk(client, ch, lang, prompt))
+    try:
+        for idx, ch in enumerate(chunks, start=1):
+            print(f"  Transcribing chunk {idx}/{len(chunks)}")
+            parts.append(transcribe_chunk(client, ch, lang, prompt))
 
-    transcript = "\n\n".join(parts)
-    out_path = out_dir / f"{audio_path.stem}.txt"
-    out_path.write_text(transcript, encoding="utf-8")
-    print(f"Saved: {out_path}")
+        transcript = "\n\n".join(parts)
+        out_path.write_text(transcript, encoding="utf-8")
+        print(f"Saved: {out_path}")
+    finally:
+        if cleanup_chunks:
+            for ch in chunks:
+                ch.unlink(missing_ok=True)
+            try:
+                tmp_dir.rmdir()
+            except OSError:
+                pass
 
 def main():
     parser = argparse.ArgumentParser()
@@ -60,6 +96,11 @@ def main():
                         help="Force language per file, or auto-detect (default: auto)")
     parser.add_argument("--prompt", default=None,
                         help="Optional context: names/acronyms to improve accuracy")
+    parser.add_argument("--overwrite", action="store_true",
+                        help="Overwrite existing transcript files (default: skip existing)")
+    parser.add_argument("--keep-chunks", dest="cleanup_chunks", action="store_false",
+                        help="Keep temporary chunk files in the output _chunks folder")
+    parser.set_defaults(cleanup_chunks=True)
     args = parser.parse_args()
 
     api_key = os.getenv("OPENAI_API_KEY")
@@ -82,7 +123,15 @@ def main():
         sys.exit(1)
 
     for audio_path in audio_files:
-        transcribe_file(client, audio_path, out_dir, args.lang, args.prompt)
+        transcribe_file(
+            client=client,
+            audio_path=audio_path,
+            out_dir=out_dir,
+            lang_mode=args.lang,
+            prompt=args.prompt,
+            cleanup_chunks=args.cleanup_chunks,
+            overwrite=args.overwrite,
+        )
 
 if __name__ == "__main__":
     main()
