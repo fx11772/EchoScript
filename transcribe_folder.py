@@ -24,9 +24,17 @@ def split_audio_to_chunks(audio_path: Path, workdir: Path) -> list[Path]:
 
     return chunks
 
-def transcribe_chunk(client: OpenAI, chunk_path: Path, lang: str | None, prompt: str | None) -> str:
+def transcribe_chunk(
+    client: OpenAI,
+    chunk_path: Path,
+    lang: str | None,
+    prompt: str | None,
+    debug_fail_first_attempt: bool = False,
+) -> str:
     for attempt in range(1, MAX_RETRY_ATTEMPTS + 1):
         try:
+            if attempt == 1 and debug_fail_first_attempt:
+                raise RuntimeError("Debug forced first-attempt failure")
             with open(chunk_path, "rb") as f:
                 kwargs = {"model": "gpt-4o-mini-transcribe", "file": f}
                 if lang:
@@ -53,6 +61,7 @@ def transcribe_file(
     prompt: str | None,
     cleanup_chunks: bool = True,
     overwrite: bool = False,
+    debug_fail_first_attempt: bool = False,
 ):
     out_dir.mkdir(parents=True, exist_ok=True)
     out_path = out_dir / f"{audio_path.stem}.txt"
@@ -74,7 +83,15 @@ def transcribe_file(
     try:
         for idx, ch in enumerate(chunks, start=1):
             print(f"  Transcribing chunk {idx}/{len(chunks)}")
-            parts.append(transcribe_chunk(client, ch, lang, prompt))
+            parts.append(
+                transcribe_chunk(
+                    client,
+                    ch,
+                    lang,
+                    prompt,
+                    debug_fail_first_attempt=debug_fail_first_attempt,
+                )
+            )
 
         transcript = "\n\n".join(parts)
         out_path.write_text(transcript, encoding="utf-8")
@@ -100,6 +117,8 @@ def main():
                         help="Overwrite existing transcript files (default: skip existing)")
     parser.add_argument("--keep-chunks", dest="cleanup_chunks", action="store_false",
                         help="Keep temporary chunk files in the output _chunks folder")
+    parser.add_argument("--debug-fail-first-attempt", action="store_true",
+                        help="Debug only: force first attempt failure per chunk to verify retry behavior")
     parser.set_defaults(cleanup_chunks=True)
     args = parser.parse_args()
 
@@ -131,6 +150,7 @@ def main():
             prompt=args.prompt,
             cleanup_chunks=args.cleanup_chunks,
             overwrite=args.overwrite,
+            debug_fail_first_attempt=args.debug_fail_first_attempt,
         )
 
 if __name__ == "__main__":

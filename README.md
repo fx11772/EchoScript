@@ -201,6 +201,12 @@ Keep temporary chunk files for debugging (default behavior is cleanup):
 python transcribe_folder.py ./conference_recordings --keep-chunks
 ```
 
+Trigger retry logic in development by forcing first-attempt failure per chunk:
+
+```bash
+python transcribe_folder.py ./conference_recordings --debug-fail-first-attempt
+```
+
 ---
 
 # CI/CD (GitHub Actions)
