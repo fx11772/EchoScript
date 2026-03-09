@@ -1,5 +1,6 @@
-from pathlib import Path
+import random
 import re
+from pathlib import Path
 
 from tiktok_pipeline.models import ClipPlanItem, ScriptDraft
 
@@ -33,6 +34,18 @@ def _parent_tokens(file_path: Path) -> set[str]:
     return tokens
 
 
+def _folder_key(file_path: Path) -> str:
+    parent = file_path.parent
+    return str(parent)
+
+
+def _choose_candidate_from_folder(
+    folder_candidates: list[tuple[tuple[float, float, float], float, Path]]
+) -> tuple[tuple[float, float, float], float, Path]:
+    folder_candidates.sort(key=lambda item: (item[0], item[1]), reverse=True)
+    return folder_candidates[0]
+
+
 def extract_keywords(script: ScriptDraft) -> set[str]:
     keywords: set[str] = set()
     for line in script.lines:
@@ -46,31 +59,31 @@ def score_broll_file(file_path: Path, keywords: set[str]) -> tuple[int, set[str]
     return (len(matched), matched)
 
 
-def build_clip_plan(script: ScriptDraft, broll_files: list[Path]) -> list[ClipPlanItem]:
+def build_clip_plan(script: ScriptDraft, broll_files: list[Path], seed: int | None = None) -> list[ClipPlanItem]:
     if not broll_files:
         return []
 
-    script_keywords = extract_keywords(script)
-    niche_keywords = _tokens(script.niche)
+    rng = random.Random(seed) if seed is not None else random.SystemRandom()
     items: list[ClipPlanItem] = []
-    fallback_idx = 0
+    folders: dict[str, list[Path]] = {}
+    for candidate in broll_files:
+        folders.setdefault(_folder_key(candidate), []).append(candidate)
+
+    folder_cycle: list[str] = []
+    previous_folder: str | None = None
 
     for idx, line in enumerate(script.lines):
-        line_keywords = _tokens(line.text)
-        best_file = None
-        best_rank = (-1, -1, "")
-        for candidate in broll_files:
-            score, _matched = score_broll_file(candidate, line_keywords or script_keywords)
-            niche_folder_score = len(_parent_tokens(candidate).intersection(niche_keywords))
-            rank = (score, niche_folder_score, str(candidate))
-            if rank > best_rank:
-                best_rank = rank
-                best_file = candidate
+        if not folder_cycle:
+            folder_cycle = list(folders.keys())
+            rng.shuffle(folder_cycle)
+            if previous_folder is not None and len(folder_cycle) > 1 and folder_cycle[0] == previous_folder:
+                folder_cycle.append(folder_cycle.pop(0))
 
-        if best_file is None or best_rank[0] == 0:
-            best_file = broll_files[fallback_idx % len(broll_files)]
-            fallback_idx += 1
-
+        selected_folder = folder_cycle.pop(0)
+        folder_files = list(folders[selected_folder])
+        rng.shuffle(folder_files)
+        best_file = folder_files[0]
+        previous_folder = selected_folder
         start_s = float(idx * 2)
         end_s = start_s + 2.0
         items.append(

@@ -50,7 +50,7 @@ def build_context(
 def run_phase_1c(context: PipelineContext) -> Path:
     broll_files = discover_broll_files(context.broll_dir)
     script = generate_script(context.niche, seed=context.seed)
-    clip_plan = build_clip_plan(script, broll_files)
+    clip_plan = build_clip_plan(script, broll_files, seed=context.seed)
     narration_path, alignment_path = create_narration_and_alignment(
         script=script,
         audio_dir=context.audio_dir,
