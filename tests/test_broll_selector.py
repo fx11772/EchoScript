@@ -33,19 +33,26 @@ class TestBrollSelector(unittest.TestCase):
         self.assertEqual(score, 2)
         self.assertEqual(matched, {"fitness", "motivation"})
 
-    def test_build_clip_plan_prefers_keyword_matched_clip(self):
+    def test_build_clip_plan_is_deterministic_with_seed(self):
         script = self._sample_script()
         with tempfile.TemporaryDirectory() as td:
             root = Path(td)
-            matched = root / "fitness_motivation_broll.mp4"
-            generic = root / "random_city_walk.mp4"
-            matched.touch()
-            generic.touch()
+            first_dir = root / "set_a"
+            second_dir = root / "set_b"
+            first_dir.mkdir()
+            second_dir.mkdir()
+            first = first_dir / "clip_one.mp4"
+            second = second_dir / "clip_two.mp4"
+            first.touch()
+            second.touch()
 
-            plan = build_clip_plan(script, [generic, matched])
+            first_plan = build_clip_plan(script, [first, second], seed=11)
+            second_plan = build_clip_plan(script, [first, second], seed=11)
 
-        self.assertTrue(plan)
-        self.assertEqual(plan[0].clip_path, matched)
+        self.assertEqual(
+            [item.clip_path for item in first_plan],
+            [item.clip_path for item in second_plan],
+        )
 
     def test_build_clip_plan_uses_fallback_when_no_matches(self):
         script = ScriptDraft(
@@ -66,12 +73,12 @@ class TestBrollSelector(unittest.TestCase):
             first.touch()
             second.touch()
 
-            plan = build_clip_plan(script, [first, second])
+            plan = build_clip_plan(script, [first, second], seed=5)
 
-        self.assertEqual(plan[0].clip_path, first)
-        self.assertEqual(plan[1].clip_path, second)
+        self.assertIn(plan[0].clip_path, {first, second})
+        self.assertIn(plan[1].clip_path, {first, second})
 
-    def test_build_clip_plan_prefers_niche_subfolder_on_tie(self):
+    def test_build_clip_plan_avoids_immediate_folder_repeat(self):
         script = ScriptDraft(
             niche="luxury lifestyle",
             lines=[
@@ -85,18 +92,56 @@ class TestBrollSelector(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as td:
             root = Path(td)
-            niche_dir = root / "luxury_lifestyle"
-            generic_dir = root / "misc"
-            niche_dir.mkdir()
-            generic_dir.mkdir()
-            preferred = niche_dir / "luxury_cars.mp4"
-            generic = generic_dir / "luxury_cars.mp4"
-            preferred.touch()
-            generic.touch()
+            cars_dir = root / "cars"
+            watches_dir = root / "watches"
+            cars_dir.mkdir()
+            watches_dir.mkdir()
+            car_clip = cars_dir / "luxury_cars.mp4"
+            watch_clip = watches_dir / "luxury_watch.mp4"
+            car_clip.touch()
+            watch_clip.touch()
 
-            plan = build_clip_plan(script, [generic, preferred])
+            plan = build_clip_plan(script, [car_clip, watch_clip], seed=3)
 
-        self.assertEqual(plan[0].clip_path, preferred)
+        folder_names = [item.clip_path.parent.name for item in plan if item.clip_path is not None]
+        for idx in range(1, len(folder_names)):
+            self.assertNotEqual(folder_names[idx], folder_names[idx - 1])
+
+    def test_build_clip_plan_spreads_selection_across_relevant_folders(self):
+        script = ScriptDraft(
+            niche="luxury lifestyle",
+            lines=[
+                ScriptLine(label="HOOK", text="Luxury lifestyle shifts your image"),
+                ScriptLine(label="LINE", text="Luxury details define your status"),
+                ScriptLine(label="LINE", text="Lifestyle signals build silent power"),
+                ScriptLine(label="LINE", text="Luxury taste separates winners fast"),
+                ScriptLine(label="LINE", text="Status symbols control first impressions"),
+                ScriptLine(label="PAYOFF", text="Presence changes every room instantly"),
+                ScriptLine(label="CTA", text="Comment follow and share now"),
+            ],
+        )
+
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            cars_dir = root / "luxury_lifestyle" / "cars"
+            watches_dir = root / "luxury_lifestyle" / "watches"
+            travel_dir = root / "luxury_lifestyle" / "travel"
+            cars_dir.mkdir(parents=True)
+            watches_dir.mkdir(parents=True)
+            travel_dir.mkdir(parents=True)
+            car_clip = cars_dir / "luxury_status.mp4"
+            watch_clip = watches_dir / "luxury_status.mp4"
+            travel_clip = travel_dir / "luxury_status.mp4"
+            car_clip.touch()
+            watch_clip.touch()
+            travel_clip.touch()
+
+            plan = build_clip_plan(script, [car_clip, watch_clip, travel_clip], seed=7)
+
+        folder_names = [item.clip_path.parent.name for item in plan if item.clip_path is not None]
+        selected_folders = set(folder_names)
+        self.assertEqual(selected_folders, {"cars", "watches", "travel"})
+        self.assertLessEqual(folder_names.count("cars"), 3)
 
     def test_discover_broll_files_searches_recursively(self):
         with tempfile.TemporaryDirectory() as td:
