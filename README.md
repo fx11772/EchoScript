@@ -115,7 +115,16 @@ setx OPENAI_API_KEY "your_api_key_here"
 # Current Entrypoints
 
 - `transcribe_folder.py` (legacy side tool, kept as-is for transcription)
-- New TikTok pipeline entrypoint: planned and tracked in implementation plan (see below)
+- `generate_tiktok.py` (Phase 1A scaffold entrypoint for TikTok pipeline)
+
+Phase 1A scaffold example:
+
+```bash
+python generate_tiktok.py \
+  --niche "fitness motivation" \
+  --broll-dir ./broll \
+  --out-dir ./output
+```
 
 ---
 
