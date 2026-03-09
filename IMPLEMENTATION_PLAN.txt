@@ -1,0 +1,138 @@
+EchoScript TikTok Automation - Implementation Plan (Phase 1)
+
+Objective
+- Build a Python + FFmpeg CLI pipeline that automates TikTok video generation with this fixed flow:
+  1) niche -> script
+  2) script -> voice + forced alignment timestamps
+  3) keyword-driven b-roll selection from local disk
+  4) catchy short-form assembly for 9:16 format
+  5) subtitle burn-in
+- Keep existing transcribe_folder.py as a side tool.
+
+Out of Scope
+- Any workflow outside the 5 steps above.
+- Non-CLI control surfaces in phase 1 (no web UI, no config files as primary input).
+- Replacing/removing current transcription utility.
+
+Proposed New Entrypoint
+- generate_tiktok.py
+
+Proposed CLI (Phase 1)
+- Required:
+  --niche "<topic>"
+  --broll-dir <path>
+- Optional:
+  --out-dir <path> (default: output)
+  --duration-seconds <int> (default: 30-60 target strategy)
+  --voice <id>
+  --seed <int>
+  --keep-temp
+  --overwrite
+
+Pipeline Design
+1) Script Generation Module
+- Input: niche string.
+- Output: structured lines with labels:
+  HOOK, LINE(s), PAYOFF, CTA.
+- Enforce subtitle constraints:
+  - 3-8 words/line
+  - 1 idea per line
+  - dramatic/motivational/slightly provocative tone
+
+2) Voice + Forced Alignment Module
+- Input: generated caption lines.
+- Steps:
+  - synthesize full narration audio
+  - run forced alignment to produce word/line timestamps
+- Output:
+  - narration audio file (wav/m4a)
+  - subtitle timing file (json intermediate)
+
+3) Keyword Extraction + B-roll Matching Module
+- Input: script lines, b-roll directory.
+- Steps:
+  - extract key terms from each line
+  - match against filename/tags (phase 1: filename token matching)
+  - choose best clip per line segment
+  - fallback to generic/random eligible clip if no match
+- Output: ordered clip plan with source path + start/end windows.
+
+4) Assembly Module (FFmpeg)
+- Input: clip plan + narration timing.
+- Steps:
+  - normalize clips (fps/resolution)
+  - scale/crop/pad to 1080x1920
+  - trim and concatenate to narration duration
+  - mix optional background music at low volume (phase 1 optional toggle)
+- Output: subtitle-free composed video.
+
+5) Subtitle Burn-in Module
+- Input: composed video + timed lines.
+- Steps:
+  - generate ASS or SRT from aligned timestamps
+  - burn captions with ffmpeg subtitles filter
+- Output: final TikTok-ready mp4 with hard subtitles.
+
+Directory Layout (Proposed)
+- generate_tiktok.py
+- tiktok_pipeline/
+  - script_gen.py
+  - tts_align.py
+  - broll_selector.py
+  - assemble.py
+  - subtitles.py
+  - models.py
+  - utils.py
+- tests/
+  - test_script_gen.py
+  - test_broll_selector.py
+  - test_subtitle_format_rules.py
+  - test_cli_generate_tiktok.py
+
+Testing Plan
+- Unit tests:
+  - script format validation (HOOK/LINE/PAYOFF/CTA and word-count limits)
+  - keyword extraction and filename matching score behavior
+  - subtitle timing conversion (json -> srt/ass)
+- Integration tests (mocked external APIs/tools where possible):
+  - CLI happy path produces expected output artifacts.
+  - Missing b-roll and no-match fallback behavior.
+  - Overwrite/keep-temp flags.
+- Smoke test (optional in CI):
+  - minimal local fixture assets -> short rendered mp4.
+
+Implementation Phases
+Phase 1A - Scaffolding
+- Add new entrypoint and pipeline package skeleton.
+- Add typed data models for script lines, timings, and clip plan.
+- Add basic CLI parse/validation and output directories.
+
+Phase 1B - Script + Matching
+- Implement script generator with strict formatting constraints.
+- Implement filename keyword matching and fallback behavior.
+- Add unit tests for rules and matching.
+
+Phase 1C - Audio + Alignment
+- Implement TTS generation wrapper.
+- Implement forced alignment wrapper and normalized timing output.
+- Add tests for alignment-output parsing.
+
+Phase 1D - FFmpeg Assembly + Burn-in
+- Implement FFmpeg command builder for vertical assembly.
+- Implement subtitle file generation and burn-in pass.
+- Add integration tests with tiny local fixtures.
+
+Phase 1E - Harden + DX
+- Improve logs and per-step error messages.
+- Add retries on remote calls where needed.
+- Final README usage updates and example commands.
+
+Acceptance Criteria (Phase 1)
+- Single CLI command can generate one TikTok video from niche + b-roll directory.
+- Output includes:
+  - narration audio
+  - aligned timestamps
+  - rendered vertical mp4 with hard subtitles
+- Subtitle text follows style/tone/structure rules.
+- Existing transcribe_folder.py behavior remains intact.
+- Tests pass in CI.

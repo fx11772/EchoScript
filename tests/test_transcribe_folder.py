@@ -81,6 +81,55 @@ class TestTranscribeFolder(unittest.TestCase):
             self.assertNotIn("language", kwargs)
             self.assertNotIn("prompt", kwargs)
 
+    def test_transcribe_chunk_retries_then_succeeds(self):
+        with tempfile.TemporaryDirectory() as td:
+            chunk = Path(td) / "c.m4a"
+            chunk.write_bytes(b"audio")
+
+            client = MagicMock()
+            client.audio.transcriptions.create.side_effect = [
+                RuntimeError("temporary issue"),
+                type("Resp", (), {"text": "ok"})(),
+            ]
+
+            with patch.object(tf.time, "sleep") as sleep_mock:
+                text = tf.transcribe_chunk(client, chunk, None, None)
+
+            self.assertEqual(text, "ok")
+            self.assertEqual(client.audio.transcriptions.create.call_count, 2)
+            sleep_mock.assert_called_once_with(tf.RETRY_BACKOFF_SECONDS)
+
+    def test_transcribe_chunk_raises_after_max_retries(self):
+        with tempfile.TemporaryDirectory() as td:
+            chunk = Path(td) / "c.m4a"
+            chunk.write_bytes(b"audio")
+
+            client = MagicMock()
+            client.audio.transcriptions.create.side_effect = RuntimeError("always fails")
+
+            with patch.object(tf.time, "sleep") as sleep_mock:
+                with self.assertRaises(RuntimeError) as exc:
+                    tf.transcribe_chunk(client, chunk, None, None)
+
+            self.assertIn("after", str(exc.exception))
+            self.assertEqual(client.audio.transcriptions.create.call_count, tf.MAX_RETRY_ATTEMPTS)
+            self.assertEqual(sleep_mock.call_count, tf.MAX_RETRY_ATTEMPTS - 1)
+
+    def test_transcribe_chunk_debug_fail_first_attempt_forces_retry(self):
+        with tempfile.TemporaryDirectory() as td:
+            chunk = Path(td) / "c.m4a"
+            chunk.write_bytes(b"audio")
+
+            client = MagicMock()
+            client.audio.transcriptions.create.return_value = type("Resp", (), {"text": "ok"})()
+
+            with patch.object(tf.time, "sleep") as sleep_mock:
+                text = tf.transcribe_chunk(client, chunk, None, None, debug_fail_first_attempt=True)
+
+            self.assertEqual(text, "ok")
+            self.assertEqual(client.audio.transcriptions.create.call_count, 1)
+            sleep_mock.assert_called_once_with(tf.RETRY_BACKOFF_SECONDS)
+
     def test_transcribe_file_writes_merged_transcript(self):
         with tempfile.TemporaryDirectory() as td:
             root = Path(td)
@@ -101,6 +150,127 @@ class TestTranscribeFolder(unittest.TestCase):
             self.assertEqual(out_file.read_text(encoding="utf-8"), "part one\n\npart two")
             self.assertEqual(mock_transcribe_chunk.call_count, 2)
 
+    def test_transcribe_file_cleans_up_chunks_by_default(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            audio = root / "session.mp3"
+            audio.touch()
+            out_dir = root / "out"
+            tmp_dir = out_dir / "_chunks"
+            tmp_dir.mkdir(parents=True)
+            chunk_paths = [tmp_dir / "session_chunk_000.m4a", tmp_dir / "session_chunk_001.m4a"]
+            for c in chunk_paths:
+                c.touch()
+
+            with patch.object(tf, "split_audio_to_chunks", return_value=chunk_paths), patch.object(
+                tf, "transcribe_chunk", side_effect=["a", "b"]
+            ):
+                tf.transcribe_file(client=MagicMock(), audio_path=audio, out_dir=out_dir, lang_mode="auto", prompt=None)
+
+            self.assertFalse(any(c.exists() for c in chunk_paths))
+
+    def test_transcribe_file_keeps_chunks_when_requested(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            audio = root / "session.mp3"
+            audio.touch()
+            out_dir = root / "out"
+            tmp_dir = out_dir / "_chunks"
+            tmp_dir.mkdir(parents=True)
+            chunk_paths = [tmp_dir / "session_chunk_000.m4a", tmp_dir / "session_chunk_001.m4a"]
+            for c in chunk_paths:
+                c.touch()
+
+            with patch.object(tf, "split_audio_to_chunks", return_value=chunk_paths), patch.object(
+                tf, "transcribe_chunk", side_effect=["a", "b"]
+            ):
+                tf.transcribe_file(
+                    client=MagicMock(),
+                    audio_path=audio,
+                    out_dir=out_dir,
+                    lang_mode="auto",
+                    prompt=None,
+                    cleanup_chunks=False,
+                )
+
+            self.assertTrue(all(c.exists() for c in chunk_paths))
+
+    def test_transcribe_file_skips_existing_output_without_overwrite(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            audio = root / "session.mp3"
+            audio.touch()
+            out_dir = root / "out"
+            out_dir.mkdir(parents=True)
+            out_file = out_dir / "session.txt"
+            out_file.write_text("existing", encoding="utf-8")
+
+            with patch.object(tf, "split_audio_to_chunks") as split_mock, patch.object(tf, "transcribe_chunk") as transcribe_mock:
+                tf.transcribe_file(
+                    client=MagicMock(),
+                    audio_path=audio,
+                    out_dir=out_dir,
+                    lang_mode="auto",
+                    prompt=None,
+                    overwrite=False,
+                )
+
+            split_mock.assert_not_called()
+            transcribe_mock.assert_not_called()
+            self.assertEqual(out_file.read_text(encoding="utf-8"), "existing")
+
+    def test_transcribe_file_overwrites_when_requested(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            audio = root / "session.mp3"
+            audio.touch()
+            out_dir = root / "out"
+            out_dir.mkdir(parents=True)
+            out_file = out_dir / "session.txt"
+            out_file.write_text("old", encoding="utf-8")
+
+            chunk_paths = [root / "ch1.m4a", root / "ch2.m4a"]
+            for c in chunk_paths:
+                c.touch()
+
+            with patch.object(tf, "split_audio_to_chunks", return_value=chunk_paths), patch.object(
+                tf, "transcribe_chunk", side_effect=["new1", "new2"]
+            ):
+                tf.transcribe_file(
+                    client=MagicMock(),
+                    audio_path=audio,
+                    out_dir=out_dir,
+                    lang_mode="auto",
+                    prompt=None,
+                    overwrite=True,
+                )
+
+            self.assertEqual(out_file.read_text(encoding="utf-8"), "new1\n\nnew2")
+
+    def test_transcribe_file_passes_debug_fail_flag_to_transcribe_chunk(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            audio = root / "session.mp3"
+            audio.touch()
+            out_dir = root / "out"
+            chunk_paths = [root / "ch1.m4a"]
+            chunk_paths[0].touch()
+
+            with patch.object(tf, "split_audio_to_chunks", return_value=chunk_paths), patch.object(
+                tf, "transcribe_chunk", return_value="part one"
+            ) as mock_transcribe_chunk:
+                tf.transcribe_file(
+                    client=MagicMock(),
+                    audio_path=audio,
+                    out_dir=out_dir,
+                    lang_mode="auto",
+                    prompt=None,
+                    debug_fail_first_attempt=True,
+                )
+
+            self.assertTrue(mock_transcribe_chunk.called)
+            self.assertTrue(mock_transcribe_chunk.call_args.kwargs["debug_fail_first_attempt"])
+
     def test_main_filters_supported_extensions_and_processes_sorted(self):
         with tempfile.TemporaryDirectory() as td:
             root = Path(td)
@@ -113,18 +283,40 @@ class TestTranscribeFolder(unittest.TestCase):
             processed = []
             argv = ["transcribe_folder.py", str(in_dir), "--out", str(root / "out"), "--lang", "auto"]
 
+            def _capture_call(**kwargs):
+                processed.append(kwargs["audio_path"].name)
+                self.assertTrue(kwargs["cleanup_chunks"])
+                self.assertFalse(kwargs["overwrite"])
+
             with patch.dict(os.environ, {"OPENAI_API_KEY": "test-key"}, clear=False), patch.object(
                 tf, "OpenAI", side_effect=lambda api_key: {"api_key": api_key}
-            ), patch.object(
-                tf,
-                "transcribe_file",
-                side_effect=lambda client, audio_path, out_dir, lang_mode, prompt: processed.append(audio_path.name),
-            ), patch.object(
-                sys, "argv", argv
-            ):
+            ), patch.object(tf, "transcribe_file", side_effect=_capture_call), patch.object(sys, "argv", argv):
                 tf.main()
 
             self.assertEqual(processed, ["a.mp3", "b.wav"])
+
+    def test_main_passes_debug_flag_to_transcribe_file(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            in_dir = root / "in"
+            in_dir.mkdir()
+            (in_dir / "a.mp3").touch()
+
+            argv = [
+                "transcribe_folder.py",
+                str(in_dir),
+                "--out",
+                str(root / "out"),
+                "--debug-fail-first-attempt",
+            ]
+
+            def _capture_call(**kwargs):
+                self.assertTrue(kwargs["debug_fail_first_attempt"])
+
+            with patch.dict(os.environ, {"OPENAI_API_KEY": "test-key"}, clear=False), patch.object(
+                tf, "OpenAI", side_effect=lambda api_key: {"api_key": api_key}
+            ), patch.object(tf, "transcribe_file", side_effect=_capture_call), patch.object(sys, "argv", argv):
+                tf.main()
 
     def test_main_exits_when_api_key_missing(self):
         with tempfile.TemporaryDirectory() as td:
