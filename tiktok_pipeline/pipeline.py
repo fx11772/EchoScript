@@ -1,9 +1,9 @@
 from pathlib import Path
 
 from tiktok_pipeline.assemble import create_assembly_plan_placeholder
-from tiktok_pipeline.broll_selector import build_clip_plan_stub
+from tiktok_pipeline.broll_selector import build_clip_plan, extract_keywords
 from tiktok_pipeline.models import PipelineContext
-from tiktok_pipeline.script_gen import generate_script_stub
+from tiktok_pipeline.script_gen import generate_script
 from tiktok_pipeline.subtitles import create_subtitle_placeholder
 from tiktok_pipeline.tts_align import create_alignment_placeholder
 from tiktok_pipeline.utils import discover_broll_files, ensure_dir, slugify, write_json
@@ -47,23 +47,26 @@ def build_context(
     )
 
 
-def run_phase_1a(context: PipelineContext) -> Path:
+def run_phase_1b(context: PipelineContext) -> Path:
     broll_files = discover_broll_files(context.broll_dir)
-    script = generate_script_stub(context.niche)
-    clip_plan = build_clip_plan_stub(script, broll_files)
+    script = generate_script(context.niche)
+    clip_plan = build_clip_plan(script, broll_files)
     alignment_path = create_alignment_placeholder(script, context.alignments_dir)
     assembly_plan_path = create_assembly_plan_placeholder(context.plans_dir, clip_plan)
     captions_path = create_subtitle_placeholder(script, context.renders_dir)
 
     script_path = context.scripts_dir / "script_draft.json"
     write_json(script_path, script.to_dict())
+    script_keywords = sorted(extract_keywords(script))
 
     manifest = {
-        "phase": "1A",
-        "status": "scaffolded",
+        "phase": "1B",
+        "status": "script+matching implemented",
         "niche": context.niche,
         "broll_dir": str(context.broll_dir),
         "broll_count": len(broll_files),
+        "script_keywords": script_keywords,
+        "clip_plan_count": len(clip_plan),
         "duration_seconds": context.duration_seconds,
         "voice": context.voice,
         "seed": context.seed,
@@ -76,6 +79,10 @@ def run_phase_1a(context: PipelineContext) -> Path:
             "captions_placeholder": str(captions_path),
         },
     }
-    manifest_path = context.out_dir / "phase_1a_manifest.json"
+    manifest_path = context.out_dir / "phase_1b_manifest.json"
     write_json(manifest_path, manifest)
     return manifest_path
+
+
+# Backward-compatible alias while CLI/tests migrate.
+run_phase_1a = run_phase_1b

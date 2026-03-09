@@ -2,12 +2,26 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 import generate_tiktok as gt
+from tiktok_pipeline.models import ScriptDraft, ScriptLine
 
 
 class TestGenerateTikTokCLI(unittest.TestCase):
-    def test_main_creates_phase_1a_artifacts(self):
+    def _script(self, niche: str) -> ScriptDraft:
+        return ScriptDraft(
+            niche=niche,
+            lines=[
+                ScriptLine(label="HOOK", text="What if luxury rewires status today"),
+                ScriptLine(label="LINE", text="Wealth signals speak before words"),
+                ScriptLine(label="LINE", text="Luxury habits change your energy"),
+                ScriptLine(label="PAYOFF", text="Presence shapes every room instantly"),
+                ScriptLine(label="CTA", text="Comment follow and share now"),
+            ],
+        )
+
+    def test_main_creates_phase_1b_artifacts(self):
         with tempfile.TemporaryDirectory() as td:
             root = Path(td)
             broll_dir = root / "broll"
@@ -15,14 +29,15 @@ class TestGenerateTikTokCLI(unittest.TestCase):
             broll_dir.mkdir()
             (broll_dir / "clip_one.mp4").touch()
 
-            rc = gt.main([
-                "--niche",
-                "fitness motivation",
-                "--broll-dir",
-                str(broll_dir),
-                "--out-dir",
-                str(out_dir),
-            ])
+            with patch("tiktok_pipeline.pipeline.generate_script", return_value=self._script("fitness motivation")):
+                rc = gt.main([
+                    "--niche",
+                    "fitness motivation",
+                    "--broll-dir",
+                    str(broll_dir),
+                    "--out-dir",
+                    str(out_dir),
+                ])
 
             self.assertEqual(rc, 0)
             run_dir = out_dir / "fitness-motivation"
@@ -33,11 +48,12 @@ class TestGenerateTikTokCLI(unittest.TestCase):
             self.assertTrue((run_dir / "renders").is_dir())
             self.assertTrue((run_dir / "temp").is_dir())
 
-            manifest_path = run_dir / "phase_1a_manifest.json"
+            manifest_path = run_dir / "phase_1b_manifest.json"
             self.assertTrue(manifest_path.exists())
             manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-            self.assertEqual(manifest["phase"], "1A")
+            self.assertEqual(manifest["phase"], "1B")
             self.assertEqual(manifest["broll_count"], 1)
+            self.assertGreaterEqual(manifest["clip_plan_count"], 1)
 
     def test_main_returns_error_when_no_broll_files(self):
         with tempfile.TemporaryDirectory() as td:
@@ -56,6 +72,30 @@ class TestGenerateTikTokCLI(unittest.TestCase):
                 str(out_dir),
             ])
             self.assertEqual(rc, 1)
+
+    def test_main_discovers_nested_broll_files(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            broll_dir = root / "broll"
+            out_dir = root / "output"
+            nested = broll_dir / "luxury_lifestyle"
+            nested.mkdir(parents=True)
+            (nested / "luxury_cars.mp4").touch()
+
+            with patch("tiktok_pipeline.pipeline.generate_script", return_value=self._script("luxury lifestyle")):
+                rc = gt.main([
+                    "--niche",
+                    "luxury lifestyle",
+                    "--broll-dir",
+                    str(broll_dir),
+                    "--out-dir",
+                    str(out_dir),
+                ])
+
+            self.assertEqual(rc, 0)
+            manifest_path = out_dir / "luxury-lifestyle" / "phase_1b_manifest.json"
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            self.assertEqual(manifest["broll_count"], 1)
 
     def test_main_returns_error_for_invalid_duration(self):
         with tempfile.TemporaryDirectory() as td:
@@ -90,19 +130,20 @@ class TestGenerateTikTokCLI(unittest.TestCase):
             stale_file = run_dir / "stale.txt"
             stale_file.write_text("old", encoding="utf-8")
 
-            rc = gt.main([
-                "--niche",
-                "self growth",
-                "--broll-dir",
-                str(broll_dir),
-                "--out-dir",
-                str(out_dir),
-                "--overwrite",
-            ])
+            with patch("tiktok_pipeline.pipeline.generate_script", return_value=self._script("self growth")):
+                rc = gt.main([
+                    "--niche",
+                    "self growth",
+                    "--broll-dir",
+                    str(broll_dir),
+                    "--out-dir",
+                    str(out_dir),
+                    "--overwrite",
+                ])
 
             self.assertEqual(rc, 0)
             self.assertFalse(stale_file.exists())
-            self.assertTrue((run_dir / "phase_1a_manifest.json").exists())
+            self.assertTrue((run_dir / "phase_1b_manifest.json").exists())
 
 
 if __name__ == "__main__":
