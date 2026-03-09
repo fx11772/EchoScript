@@ -115,9 +115,9 @@ setx OPENAI_API_KEY "your_api_key_here"
 # Current Entrypoints
 
 - `transcribe_folder.py` (legacy side tool, kept as-is for transcription)
-- `generate_tiktok.py` (Phase 1B entrypoint: script rules + keyword B-roll matching)
+- `generate_tiktok.py` (Phase 1C entrypoint: script, B-roll matching, TTS, normalized alignment)
 
-Phase 1B example:
+Phase 1C example:
 
 ```bash
 python generate_tiktok.py \
@@ -126,7 +126,7 @@ python generate_tiktok.py \
   --out-dir ./output
 ```
 
-This command now uses OpenAI to generate the script, then writes `phase_1b_manifest.json` and placeholder downstream artifacts while B-roll matching logic is active.
+This command uses OpenAI to generate the script, synthesize narration audio, and produce a normalized alignment JSON. It writes `phase_1c_manifest.json`, real narration/alignment artifacts, and placeholder downstream assembly/subtitle artifacts for later phases.
 
 ---
 

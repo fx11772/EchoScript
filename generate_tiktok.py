@@ -3,12 +3,12 @@ import shutil
 import sys
 from pathlib import Path
 
-from tiktok_pipeline import build_context, run_phase_1b
+from tiktok_pipeline import build_context, run_phase_1c
 from tiktok_pipeline.utils import discover_broll_files
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Phase 1A TikTok pipeline scaffolding")
+    parser = argparse.ArgumentParser(description="Phase 1C TikTok pipeline")
     parser.add_argument("--niche", required=True, help="Niche/topic used to generate script")
     parser.add_argument("--broll-dir", required=True, help="Directory containing B-roll video clips")
     parser.add_argument("--out-dir", default="output", help="Output directory root (default: output)")
@@ -66,8 +66,8 @@ def main(argv: list[str] | None = None) -> int:
             print(f"No B-roll files found in {broll_dir}")
             return 1
 
-        manifest_path = run_phase_1b(context)
-        print("Phase 1B script and matching complete")
+        manifest_path = run_phase_1c(context)
+        print("Phase 1C TTS and alignment complete")
         print(f"Run directory: {context.out_dir}")
         print(f"Manifest: {manifest_path}")
         return 0

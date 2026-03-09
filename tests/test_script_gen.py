@@ -3,7 +3,13 @@ from unittest.mock import MagicMock, patch
 
 from tiktok_pipeline.models import ScriptDraft, ScriptLine
 from tiktok_pipeline import script_gen as sg
-from tiktok_pipeline.script_gen import generate_script, parse_script_response, validate_script_format
+from tiktok_pipeline.script_gen import (
+    _build_messages,
+    _variation_brief,
+    generate_script,
+    parse_script_response,
+    validate_script_format,
+)
 
 
 class TestScriptGeneration(unittest.TestCase):
@@ -47,6 +53,34 @@ class TestScriptGeneration(unittest.TestCase):
         self.assertEqual(script.niche, "luxury lifestyle")
         self.assertEqual(script.lines[0].label, "HOOK")
         self.assertEqual(client.chat.completions.create.call_count, 1)
+
+    def test_variation_brief_is_deterministic_with_seed(self):
+        first = _variation_brief("luxury lifestyle", seed=7)
+        second = _variation_brief("luxury lifestyle", seed=7)
+        third = _variation_brief("luxury lifestyle", seed=8)
+
+        self.assertEqual(first, second)
+        self.assertNotEqual(first, third)
+
+    def test_build_messages_includes_variation_brief(self):
+        messages = _build_messages("luxury lifestyle", seed=11)
+        user_content = messages[1]["content"]
+
+        self.assertIn("Creative angle:", user_content)
+        self.assertIn("Hook instruction:", user_content)
+        self.assertIn("luxury lifestyle", user_content)
+
+    def test_generate_script_passes_seeded_variation_to_openai(self):
+        client = MagicMock()
+        client.chat.completions.create.return_value = MagicMock(
+            choices=[MagicMock(message=MagicMock(content=self._valid_response()))]
+        )
+
+        generate_script("luxury lifestyle", client=client, seed=23)
+
+        kwargs = client.chat.completions.create.call_args.kwargs
+        self.assertEqual(kwargs["temperature"], 1.3)
+        self.assertIn("Creative angle:", kwargs["messages"][1]["content"])
 
     def test_generate_script_retries_invalid_response_then_succeeds(self):
         client = MagicMock()

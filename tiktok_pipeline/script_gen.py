@@ -1,4 +1,5 @@
 import os
+import random
 import re
 
 from openai import OpenAI
@@ -11,6 +12,29 @@ ALLOWED_LABELS = {"HOOK", "LINE", "PAYOFF", "CTA"}
 STOP_WORDS = {"the", "a", "an", "of", "for", "to", "and", "in", "on", "with"}
 SCRIPT_MODEL = "gpt-4o-mini"
 MAX_SCRIPT_ATTEMPTS = 3
+CREATIVE_ANGLES = [
+    "old money mystique",
+    "silent power and status",
+    "private jet ambition",
+    "elite routine psychology",
+    "wealth signaling through restraint",
+    "high-status discipline",
+    "luxury as identity transformation",
+    "scarcity and exclusivity tension",
+]
+HOOK_PATTERNS = [
+    "start with a provocative question",
+    "start with a bold forbidden truth",
+    "start with a status-shifting claim",
+    "start with a curiosity gap",
+    "start with a dangerous-sounding insight",
+]
+FRESHNESS_RULES = [
+    "Avoid generic guru cliches.",
+    "Do not repeat common TikTok wording.",
+    "Do not use 'here is the secret' phrasing.",
+    "Favor specificity over vague hype.",
+]
 
 
 def _words(text: str) -> list[str]:
@@ -33,7 +57,21 @@ def parse_script_response(niche: str, raw_text: str) -> ScriptDraft:
     return script
 
 
-def _build_messages(niche: str) -> list[dict[str, str]]:
+def _variation_brief(niche: str, seed: int | None = None) -> str:
+    rng = random.Random(seed) if seed is not None else random.SystemRandom()
+    angle = rng.choice(CREATIVE_ANGLES)
+    hook_pattern = rng.choice(HOOK_PATTERNS)
+    freshness = rng.choice(FRESHNESS_RULES)
+    return (
+        f"Niche: {niche}. "
+        f"Creative angle: {angle}. "
+        f"Hook instruction: {hook_pattern}. "
+        f"{freshness}"
+    )
+
+
+def _build_messages(niche: str, seed: int | None = None) -> list[dict[str, str]]:
+    variation_brief = _variation_brief(niche, seed=seed)
     return [
         {
             "role": "system",
@@ -41,6 +79,7 @@ def _build_messages(niche: str) -> list[dict[str, str]]:
                 "You write short-form TikTok scripts. "
                 "Follow these rules exactly: short punchy lines, 3-8 words each, one idea per line, "
                 "dramatic, motivational, slightly provocative tone. "
+                "Make the output feel fresh and non-repetitive. "
                 "Return only separate lines in this format: "
                 "HOOK: ..., LINE: ..., LINE: ..., PAYOFF: ..., CTA: ..."
             ),
@@ -49,7 +88,8 @@ def _build_messages(niche: str) -> list[dict[str, str]]:
             "role": "user",
             "content": (
                 f"Create a TikTok script for the niche '{niche}'. "
-                "Structure must be: 1 HOOK, 2 to 4 LINE entries, 1 PAYOFF, 1 CTA."
+                "Structure must be: 1 HOOK, 2 to 4 LINE entries, 1 PAYOFF, 1 CTA. "
+                f"{variation_brief}"
             ),
         },
     ]
@@ -85,6 +125,7 @@ def generate_script(
     niche: str,
     client: OpenAI | None = None,
     model: str = SCRIPT_MODEL,
+    seed: int | None = None,
 ) -> ScriptDraft:
     if client is None:
         api_key = os.getenv("OPENAI_API_KEY")
@@ -96,8 +137,8 @@ def generate_script(
     for _attempt in range(MAX_SCRIPT_ATTEMPTS):
         response = client.chat.completions.create(
             model=model,
-            messages=_build_messages(niche),
-            temperature=1,
+            messages=_build_messages(niche, seed=seed),
+            temperature=1.3,
         )
         content = response.choices[0].message.content or ""
         try:
