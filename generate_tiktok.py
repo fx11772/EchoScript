@@ -3,7 +3,7 @@ import shutil
 import sys
 from pathlib import Path
 
-from tiktok_pipeline import build_context, run_phase_1a
+from tiktok_pipeline import build_context, run_phase_1b
 from tiktok_pipeline.utils import discover_broll_files
 
 
@@ -66,8 +66,8 @@ def main(argv: list[str] | None = None) -> int:
             print(f"No B-roll files found in {broll_dir}")
             return 1
 
-        manifest_path = run_phase_1a(context)
-        print("Phase 1A scaffold complete")
+        manifest_path = run_phase_1b(context)
+        print("Phase 1B script and matching complete")
         print(f"Run directory: {context.out_dir}")
         print(f"Manifest: {manifest_path}")
         return 0

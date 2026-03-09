@@ -115,9 +115,9 @@ setx OPENAI_API_KEY "your_api_key_here"
 # Current Entrypoints
 
 - `transcribe_folder.py` (legacy side tool, kept as-is for transcription)
-- `generate_tiktok.py` (Phase 1A scaffold entrypoint for TikTok pipeline)
+- `generate_tiktok.py` (Phase 1B entrypoint: script rules + keyword B-roll matching)
 
-Phase 1A scaffold example:
+Phase 1B example:
 
 ```bash
 python generate_tiktok.py \
@@ -125,6 +125,8 @@ python generate_tiktok.py \
   --broll-dir ./broll \
   --out-dir ./output
 ```
+
+This command now uses OpenAI to generate the script, then writes `phase_1b_manifest.json` and placeholder downstream artifacts while B-roll matching logic is active.
 
 ---
 

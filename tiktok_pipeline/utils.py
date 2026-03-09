@@ -18,7 +18,7 @@ def ensure_dir(path: Path) -> Path:
 
 
 def discover_broll_files(broll_dir: Path) -> list[Path]:
-    files = [p for p in broll_dir.iterdir() if p.is_file() and p.suffix.lower() in VIDEO_EXTENSIONS]
+    files = [p for p in broll_dir.rglob("*") if p.is_file() and p.suffix.lower() in VIDEO_EXTENSIONS]
     return sorted(files)
 
 
