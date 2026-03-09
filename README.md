@@ -1,35 +1,58 @@
 
 # EchoScript
 
-EchoScript is a lightweight Python tool that automatically transcribes long audio recordings into text using the OpenAI API.
-It is designed for scenarios such as conference talks, lectures, interviews, or meetings where recordings can be **45–60 minutes or longer**.
+EchoScript is now focused on **automating TikTok video generation** with a Python + FFmpeg CLI workflow.
 
-The tool processes audio files in batches, splits large recordings into manageable chunks, sends them to the OpenAI transcription model, and reconstructs a clean transcript.
-
----
-
-# Features
-
-- Batch transcription of multiple audio files in a folder
-- Automatic chunking for long recordings
-- Supports common audio formats (`.m4a`, `.mp3`, `.wav`, `.aac`, `.webm`)
-- Works well for long conference sessions
-- Optional language forcing (`English`, `French`, or auto-detect)
-- Clean text output per recording
+Primary workflow:
+1. Create a script from a specified niche.
+2. Convert script to voice with timestamps (via forced alignment).
+3. Select B-roll clips from disk using filename/tag matching against script keywords.
+4. Assemble a catchy 9:16 TikTok video.
+5. Burn subtitles onto the final video.
 
 ---
 
-# Use Case
+# Project Scope
 
-This tool was created to transcribe technical conference talks (e.g., ConFoo sessions).
-It allows processing many recordings automatically instead of manually uploading files one by one.
+In scope:
+- End-to-end TikTok generation pipeline only.
+- Python orchestration with FFmpeg CLI for media processing.
+- Niche provided through CLI arguments in Phase 1.
+- Forced alignment step for timestamp generation.
+- B-roll selection via filename/tag keyword matching.
+- Burned-in subtitles optimized for short-form content.
 
-Example workflow:
+Out of scope:
+- Any workflow outside the 5-step TikTok pipeline above.
+- Non-CLI input/config systems for Phase 1.
+- Replacing/removing the legacy transcription script.
 
-1. Record conference talks using a phone or laptop.
-2. Place recordings in a folder.
-3. Run EchoScript.
-4. Receive clean transcripts for each talk.
+---
+
+# Subtitle Direction (TikTok)
+
+Style rules:
+- Short, punchy sentences (3-8 words each)
+- High-impact, emotional wording
+- Designed to stop the scroll in first 3 seconds
+- Use curiosity, bold claims, or questions
+- Avoid long explanations
+- Maximum one idea per line
+
+Required structure:
+1. `HOOK` (shocking/intriguing)
+2. `LINE` (2-4 lines building the idea)
+3. `PAYOFF` (single clear takeaway)
+4. `CTA` (comment/follow/share prompt)
+
+Output format:
+- Each subtitle line is separate.
+- Example:
+  - `HOOK: ...`
+  - `LINE: ...`
+  - `LINE: ...`
+  - `PAYOFF: ...`
+  - `CTA: ...`
 
 ---
 
@@ -89,122 +112,21 @@ setx OPENAI_API_KEY "your_api_key_here"
 
 ---
 
-# Usage
+# Current Entrypoints
 
-Place your recordings in a folder.
+- `transcribe_folder.py` (legacy side tool, kept as-is for transcription)
+- New TikTok pipeline entrypoint: planned and tracked in implementation plan (see below)
 
-Example structure:
+---
 
-```
-audio_files/
-  talk1.m4a
-  talk2.m4a
-  talk3.m4a
-```
+# Legacy Transcription Tool (Side Tool)
 
-Run the transcription script:
+The existing transcription utility remains available and is not removed.
+
+Example transcription usage:
 
 ```bash
 python transcribe_folder.py ./audio_files
-```
-
----
-
-# Language Options
-
-You can control the transcription language.
-
-Auto detect (default):
-
-```bash
-python transcribe_folder.py ./audio_files --lang auto
-```
-
-Force English:
-
-```bash
-python transcribe_folder.py ./audio_files --lang en
-```
-
-Force French:
-
-```bash
-python transcribe_folder.py ./audio_files --lang fr
-```
-
----
-
-# Output
-
-Transcripts are saved automatically in a `transcripts` folder.
-
-Example:
-
-```
-transcripts/
-  talk1.txt
-  talk2.txt
-  talk3.txt
-```
-
-Each file contains the full transcript of the original recording.
-
----
-
-# Supported Audio Formats
-
-- `.m4a`
-- `.mp3`
-- `.wav`
-- `.aac`
-- `.webm`
-- `.mp4`
-
----
-
-# How It Works
-
-1. EchoScript scans the provided folder for audio files.
-2. Each audio file is split into ~10 minute chunks.
-3. Each chunk is sent to the OpenAI transcription model.
-4. Transcriptions are merged into a final text file.
-
-This approach avoids API size limits and improves reliability when processing long recordings.
-
----
-
-# Example Command
-
-```bash
-python transcribe_folder.py ./conference_recordings --lang auto
-```
-
----
-
-# Robustness Options
-
-Skip already-transcribed files by default (resumable runs):
-
-```bash
-python transcribe_folder.py ./conference_recordings
-```
-
-Force regeneration of existing transcript files:
-
-```bash
-python transcribe_folder.py ./conference_recordings --overwrite
-```
-
-Keep temporary chunk files for debugging (default behavior is cleanup):
-
-```bash
-python transcribe_folder.py ./conference_recordings --keep-chunks
-```
-
-Trigger retry logic in development by forcing first-attempt failure per chunk:
-
-```bash
-python transcribe_folder.py ./conference_recordings --debug-fail-first-attempt
 ```
 
 ---
@@ -242,16 +164,10 @@ git push origin v1.0.0
 
 ---
 
-# Possible Improvements
+# Implementation Plan
 
-Future enhancements could include:
-
-- Speaker detection
-- Timestamped transcripts
-- Automatic summaries of talks
-- Markdown output formatting
-- Keyword extraction
-- CLI progress visualization
+See:
+- `IMPLEMENTATION_PLAN.txt`
 
 ---
 
