@@ -29,7 +29,10 @@ class TestGenerateTikTokCLI(unittest.TestCase):
             broll_dir.mkdir()
             (broll_dir / "clip_one.mp4").touch()
 
-            with patch("tiktok_pipeline.pipeline.generate_script", return_value=self._script("fitness motivation")):
+            with patch("tiktok_pipeline.pipeline.generate_script", return_value=self._script("fitness motivation")), patch(
+                "tiktok_pipeline.pipeline.create_narration_and_alignment",
+                return_value=(out_dir / "fake.mp3", out_dir / "fake_alignment.json"),
+            ):
                 rc = gt.main([
                     "--niche",
                     "fitness motivation",
@@ -48,10 +51,10 @@ class TestGenerateTikTokCLI(unittest.TestCase):
             self.assertTrue((run_dir / "renders").is_dir())
             self.assertTrue((run_dir / "temp").is_dir())
 
-            manifest_path = run_dir / "phase_1b_manifest.json"
+            manifest_path = run_dir / "phase_1c_manifest.json"
             self.assertTrue(manifest_path.exists())
             manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-            self.assertEqual(manifest["phase"], "1B")
+            self.assertEqual(manifest["phase"], "1C")
             self.assertEqual(manifest["broll_count"], 1)
             self.assertGreaterEqual(manifest["clip_plan_count"], 1)
 
@@ -82,7 +85,10 @@ class TestGenerateTikTokCLI(unittest.TestCase):
             nested.mkdir(parents=True)
             (nested / "luxury_cars.mp4").touch()
 
-            with patch("tiktok_pipeline.pipeline.generate_script", return_value=self._script("luxury lifestyle")):
+            with patch("tiktok_pipeline.pipeline.generate_script", return_value=self._script("luxury lifestyle")), patch(
+                "tiktok_pipeline.pipeline.create_narration_and_alignment",
+                return_value=(out_dir / "fake.mp3", out_dir / "fake_alignment.json"),
+            ):
                 rc = gt.main([
                     "--niche",
                     "luxury lifestyle",
@@ -93,7 +99,7 @@ class TestGenerateTikTokCLI(unittest.TestCase):
                 ])
 
             self.assertEqual(rc, 0)
-            manifest_path = out_dir / "luxury-lifestyle" / "phase_1b_manifest.json"
+            manifest_path = out_dir / "luxury-lifestyle" / "phase_1c_manifest.json"
             manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
             self.assertEqual(manifest["broll_count"], 1)
 
@@ -130,7 +136,10 @@ class TestGenerateTikTokCLI(unittest.TestCase):
             stale_file = run_dir / "stale.txt"
             stale_file.write_text("old", encoding="utf-8")
 
-            with patch("tiktok_pipeline.pipeline.generate_script", return_value=self._script("self growth")):
+            with patch("tiktok_pipeline.pipeline.generate_script", return_value=self._script("self growth")), patch(
+                "tiktok_pipeline.pipeline.create_narration_and_alignment",
+                return_value=(out_dir / "fake.mp3", out_dir / "fake_alignment.json"),
+            ):
                 rc = gt.main([
                     "--niche",
                     "self growth",
@@ -143,7 +152,7 @@ class TestGenerateTikTokCLI(unittest.TestCase):
 
             self.assertEqual(rc, 0)
             self.assertFalse(stale_file.exists())
-            self.assertTrue((run_dir / "phase_1b_manifest.json").exists())
+            self.assertTrue((run_dir / "phase_1c_manifest.json").exists())
 
 
 if __name__ == "__main__":
