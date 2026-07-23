@@ -1,4 +1,5 @@
 import importlib.util
+import os
 import sys
 import tempfile
 import types
@@ -10,6 +11,10 @@ from unittest.mock import patch
 def load_module():
     openai = types.ModuleType("openai")
     openai.OpenAI = object
+    openai.APIConnectionError = type("APIConnectionError", (Exception,), {})
+    openai.APIStatusError = type("APIStatusError", (Exception,), {})
+    openai.APITimeoutError = type("APITimeoutError", (Exception,), {})
+    openai.RateLimitError = type("RateLimitError", (Exception,), {})
     pydub = types.ModuleType("pydub")
     pydub.AudioSegment = object
 
@@ -88,6 +93,92 @@ class TranscribeFileCleanupTests(unittest.TestCase):
             self.assertFalse(any(chunk.exists() for chunk in successful_chunks))
             self.assertTrue(all(chunk.exists() for chunk in failed_chunks))
             self.assertTrue(tmp_dir.is_dir())
+
+
+class RetryTests(unittest.TestCase):
+    def test_retries_transient_error_then_succeeds(self):
+        error = transcribe_folder.APIConnectionError("network unavailable")
+        with patch.object(
+            transcribe_folder, "transcribe_chunk", side_effect=[error, "transcript"]
+        ) as transcribe, patch.object(transcribe_folder.time, "sleep") as sleep:
+            result = transcribe_folder.transcribe_chunk_with_retry(
+                object(), Path("chunk.m4a"), None, None, 1, 1
+            )
+
+        self.assertEqual(result, "transcript")
+        self.assertEqual(transcribe.call_count, 2)
+        sleep.assert_called_once_with(1)
+
+    def test_non_retryable_error_fails_immediately(self):
+        with patch.object(
+            transcribe_folder, "transcribe_chunk", side_effect=ValueError("invalid request")
+        ) as transcribe, patch.object(transcribe_folder.time, "sleep") as sleep:
+            with self.assertRaisesRegex(transcribe_folder.ChunkTranscriptionError, "invalid request"):
+                transcribe_folder.transcribe_chunk_with_retry(
+                    object(), Path("chunk.m4a"), None, None, 1, 1
+                )
+
+        self.assertEqual(transcribe.call_count, 1)
+        sleep.assert_not_called()
+
+    def test_retries_server_error(self):
+        error = transcribe_folder.APIStatusError("server unavailable")
+        error.status_code = 503
+        with patch.object(
+            transcribe_folder, "transcribe_chunk", side_effect=[error, "transcript"]
+        ), patch.object(transcribe_folder.time, "sleep") as sleep:
+            result = transcribe_folder.transcribe_chunk_with_retry(
+                object(), Path("chunk.m4a"), None, None, 1, 1
+            )
+
+        self.assertEqual(result, "transcript")
+        sleep.assert_called_once_with(1)
+
+    def test_exhausted_retries_preserve_chunks(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            audio_path = root / "meeting.m4a"
+            audio_path.write_bytes(b"source")
+            out_dir = root / "transcripts"
+            chunk = out_dir / "_chunks" / "meeting_chunk_000.m4a"
+            chunk.parent.mkdir(parents=True)
+            chunk.write_bytes(b"audio")
+            error = transcribe_folder.APIConnectionError("network unavailable")
+
+            with patch.object(transcribe_folder, "split_audio_to_chunks", return_value=[chunk]), patch.object(
+                transcribe_folder, "transcribe_chunk", side_effect=error
+            ), patch.object(transcribe_folder.time, "sleep") as sleep:
+                with self.assertRaises(transcribe_folder.ChunkTranscriptionError):
+                    transcribe_folder.transcribe_file(object(), audio_path, out_dir, "auto", None)
+
+            self.assertTrue(chunk.exists())
+            self.assertFalse((out_dir / "meeting.txt").exists())
+            self.assertEqual(sleep.call_args_list, [((1,),), ((2,),), ((4,),)])
+
+
+class BatchFailureTests(unittest.TestCase):
+    def test_batch_continues_after_failure_and_returns_nonzero(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            input_dir = root / "input"
+            input_dir.mkdir()
+            (input_dir / "failed.m4a").write_bytes(b"audio")
+            (input_dir / "successful.m4a").write_bytes(b"audio")
+            out_dir = root / "out"
+
+            def transcribe_side_effect(client, audio_path, *_args):
+                if audio_path.name == "failed.m4a":
+                    raise RuntimeError("unavailable")
+
+            with patch.dict(os.environ, {"OPENAI_API_KEY": "test"}), patch.object(
+                sys, "argv", ["transcribe_folder.py", str(input_dir), "--out", str(out_dir)]
+            ), patch.object(transcribe_folder, "OpenAI", return_value=object()), patch.object(
+                transcribe_folder, "transcribe_file", side_effect=transcribe_side_effect
+            ) as transcribe:
+                result = transcribe_folder.main()
+
+            self.assertEqual(result, 1)
+            self.assertEqual(transcribe.call_count, 2)
 
 
 if __name__ == "__main__":

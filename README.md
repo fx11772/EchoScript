@@ -153,6 +153,13 @@ Temporary chunk files are removed automatically after a recording has been
 transcribed and saved successfully. If processing fails, its chunks are kept
 in `transcripts/_chunks` for troubleshooting or recovery.
 
+For temporary OpenAI API or network failures, EchoScript retries each chunk up
+to three times with increasing delays. Invalid requests, authentication errors,
+and local audio or filesystem errors fail immediately. A failed recording does
+not stop the rest of the batch; the command reports every failed file and exits
+with a non-zero status. Rerunning a failed recording starts it from its first
+chunk.
+
 ---
 
 # Supported Audio Formats

@@ -1,12 +1,18 @@
 import os
 import sys
 import argparse
+import time
 from pathlib import Path
-from openai import OpenAI
+from openai import APIConnectionError, APIStatusError, APITimeoutError, OpenAI, RateLimitError
 from pydub import AudioSegment
 
 CHUNK_MINUTES = 10
 SUPPORTED_EXTS = {".m4a", ".mp3", ".wav", ".aac", ".webm", ".mp4"}
+RETRY_DELAYS_SECONDS = (1, 2, 4)
+
+
+class ChunkTranscriptionError(RuntimeError):
+    """Raised when a chunk cannot be transcribed after the allowed attempts."""
 
 def split_audio_to_chunks(audio_path: Path, workdir: Path) -> list[Path]:
     audio = AudioSegment.from_file(str(audio_path))
@@ -30,6 +36,37 @@ def transcribe_chunk(client: OpenAI, chunk_path: Path, lang: str | None, prompt:
             kwargs["prompt"] = prompt
         result = client.audio.transcriptions.create(**kwargs)
     return result.text
+
+
+def is_retryable_error(error: Exception) -> bool:
+    if isinstance(error, (APIConnectionError, APITimeoutError, RateLimitError)):
+        return True
+
+    return isinstance(error, APIStatusError) and 500 <= error.status_code < 600
+
+
+def transcribe_chunk_with_retry(
+    client: OpenAI,
+    chunk_path: Path,
+    lang: str | None,
+    prompt: str | None,
+    chunk_number: int,
+    total_chunks: int,
+) -> str:
+    for attempt, delay in enumerate((*RETRY_DELAYS_SECONDS, None), start=1):
+        try:
+            return transcribe_chunk(client, chunk_path, lang, prompt)
+        except Exception as exc:
+            if not is_retryable_error(exc) or delay is None:
+                raise ChunkTranscriptionError(
+                    f"Chunk {chunk_number}/{total_chunks} ({chunk_path.name}) failed: {exc}"
+                ) from exc
+
+            print(
+                f"  Transient error on chunk {chunk_number}/{total_chunks}: {exc}. "
+                f"Retrying in {delay} second(s) ({attempt}/{len(RETRY_DELAYS_SECONDS)})..."
+            )
+            time.sleep(delay)
 
 
 def cleanup_chunks(chunks: list[Path], tmp_dir: Path) -> None:
@@ -67,7 +104,7 @@ def transcribe_file(client: OpenAI, audio_path: Path, out_dir: Path, lang_mode: 
     parts: list[str] = []
     for idx, ch in enumerate(chunks, start=1):
         print(f"  Transcribing chunk {idx}/{len(chunks)}")
-        parts.append(transcribe_chunk(client, ch, lang, prompt))
+        parts.append(transcribe_chunk_with_retry(client, ch, lang, prompt, idx, len(chunks)))
 
     transcript = "\n\n".join(parts)
     out_path = out_dir / f"{audio_path.stem}.txt"
@@ -75,7 +112,7 @@ def transcribe_file(client: OpenAI, audio_path: Path, out_dir: Path, lang_mode: 
     print(f"Saved: {out_path}")
     cleanup_chunks(chunks, tmp_dir)
 
-def main():
+def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("folder", help="Folder containing audio files")
     parser.add_argument("--out", default="transcripts", help="Output folder (default: transcripts)")
@@ -88,24 +125,38 @@ def main():
     api_key = os.getenv("OPENAI_API_KEY")
     if not api_key:
         print("Missing OPENAI_API_KEY environment variable.")
-        sys.exit(1)
+        return 1
 
     in_dir = Path(args.folder).expanduser().resolve()
     out_dir = Path(args.out).expanduser().resolve()
 
     if not in_dir.is_dir():
         print(f"Not a folder: {in_dir}")
-        sys.exit(1)
+        return 1
 
-    client = OpenAI(api_key=api_key)
+    # Retries are handled explicitly per chunk so attempts and delays remain
+    # predictable and visible to the user.
+    client = OpenAI(api_key=api_key, max_retries=0)
 
     audio_files = sorted([p for p in in_dir.iterdir() if p.suffix.lower() in SUPPORTED_EXTS])
     if not audio_files:
         print(f"No audio files found in {in_dir} (supported: {sorted(SUPPORTED_EXTS)})")
-        sys.exit(1)
+        return 1
 
+    failed_files: list[tuple[Path, Exception]] = []
     for audio_path in audio_files:
-        transcribe_file(client, audio_path, out_dir, args.lang, args.prompt)
+        try:
+            transcribe_file(client, audio_path, out_dir, args.lang, args.prompt)
+        except Exception as exc:
+            print(f"Failed: {audio_path.name}: {exc}")
+            failed_files.append((audio_path, exc))
+
+    completed_files = len(audio_files) - len(failed_files)
+    print(f"\nCompleted: {completed_files}; Failed: {len(failed_files)}")
+    for audio_path, error in failed_files:
+        print(f"  - {audio_path.name}: {error}")
+
+    return 1 if failed_files else 0
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())
