@@ -1,219 +1,88 @@
-
 # EchoScript
 
-EchoScript is a lightweight Python tool that automatically transcribes long audio recordings into text using the OpenAI API.
-It is designed for scenarios such as conference talks, lectures, interviews, or meetings where recordings can be **45–60 minutes or longer**.
+EchoScript transcribes a folder of recordings with OpenAI's native speaker
+diarization. Each recording produces a timestamped text file with consistent,
+anonymous speaker labels for that recording.
 
-The tool processes audio files in batches, splits large recordings into manageable chunks, sends them to the OpenAI transcription model, and reconstructs a clean transcript.
+## Features
 
----
+- Batch processing for `.m4a`, `.mp3`, `.wav`, `.aac`, `.webm`, and `.mp4`
+- Native OpenAI diarization with `gpt-4o-transcribe-diarize`
+- Timestamped output such as `[01:05] Speaker B: ...`
+- Optional language forcing (`en`, `fr`, or automatic detection)
+- Retries for temporary API and network failures; a failed file does not stop
+  the rest of the batch
 
-# Features
+## Requirements
 
-- Batch transcription of multiple audio files in a folder
-- Automatic chunking for long recordings
-- Supports common audio formats (`.m4a`, `.mp3`, `.wav`, `.aac`, `.webm`)
-- Works well for long conference sessions
-- Optional language forcing (`English`, `French`, or auto-detect)
-- Clean text output per recording
+- Python 3.11–3.12
+- `ffmpeg` (and its bundled `ffprobe`) for oversized recordings
+- An OpenAI API key
 
----
-
-# Use Case
-
-This tool was created to transcribe technical conference talks (e.g., ConFoo sessions).
-It allows processing many recordings automatically instead of manually uploading files one by one.
-
-Example workflow:
-
-1. Record conference talks using a phone or laptop.
-2. Place recordings in a folder.
-3. Run EchoScript.
-4. Receive clean transcripts for each talk.
-
----
-
-# Requirements
-
-- Python **3.11–3.12**
-- `ffmpeg`
-- OpenAI API key
-
----
-
-# Installation
-
-Clone the repository:
-
-```bash
-git clone https://github.com/fx11772/EchoScript.git
-cd EchoScript
-```
-
-Create a virtual environment:
+Install dependencies and ffmpeg on macOS:
 
 ```bash
 python3 -m venv venv
 source venv/bin/activate
-```
-
-Install dependencies:
-
-```bash
 pip install -r requirements.txt
-```
-
-Install ffmpeg (required for audio processing):
-
-```bash
 brew install ffmpeg
 ```
 
----
-
-# Setup
-
-Create your local configuration file from the provided template:
-
-macOS / Linux:
-
-```bash
-cp .env.example .env
-```
-
-Windows (PowerShell):
-
-```powershell
-Copy-Item .env.example .env
-```
-
-Then open `.env` and set your key:
+Create `.env` from the example and add the key:
 
 ```dotenv
 OPENAI_API_KEY="your_api_key_here"
 ```
 
-EchoScript reads the key only from the project `.env` file. This file is
-ignored by Git; never commit or share it.
+EchoScript reads the key only from the project's `.env` file. Do not commit or
+share that file.
 
----
-
-# Usage
-
-Place your recordings in a folder.
-
-Example structure:
-
-```
-audio_files/
-  talk1.m4a
-  talk2.m4a
-  talk3.m4a
-```
-
-Run the transcription script:
+## Usage
 
 ```bash
 python transcribe_folder.py ./audio_files
-```
-
----
-
-# Language Options
-
-You can control the transcription language.
-
-Auto detect (default):
-
-```bash
-python transcribe_folder.py ./audio_files --lang auto
-```
-
-Force English:
-
-```bash
-python transcribe_folder.py ./audio_files --lang en
-```
-
-Force French:
-
-```bash
 python transcribe_folder.py ./audio_files --lang fr
+python transcribe_folder.py ./audio_files --out ./transcripts
 ```
 
----
+`--lang auto` is the default. `--prompt` remains accepted for compatibility,
+but is ignored with a warning because OpenAI's diarization model does not
+support prompts.
 
-# Output
+## Output
 
-Transcripts are saved automatically in a `transcripts` folder.
+Files are written to `transcripts/<recording-name>.txt` by default. A file
+looks like this:
 
-Example:
-
-```
-transcripts/
-  talk1.txt
-  talk2.txt
-  talk3.txt
-```
-
-Each file contains the full transcript of the original recording.
-
-Temporary chunk files are removed automatically after a recording has been
-transcribed and saved successfully. If processing fails, its chunks are kept
-in `transcripts/_chunks` for troubleshooting or recovery.
-
-For temporary OpenAI API or network failures, EchoScript retries each chunk up
-to three times with increasing delays. Invalid requests, authentication errors,
-and local audio or filesystem errors fail immediately. A failed recording does
-not stop the rest of the batch; the command reports every failed file and exits
-with a non-zero status. Rerunning a failed recording starts it from its first
-chunk.
-
----
-
-# Supported Audio Formats
-
-- `.m4a`
-- `.mp3`
-- `.wav`
-- `.aac`
-- `.webm`
-- `.mp4`
-
----
-
-# How It Works
-
-1. EchoScript scans the provided folder for audio files.
-2. Each audio file is split into ~10 minute chunks.
-3. Each chunk is sent to the OpenAI transcription model.
-4. Transcriptions are merged into a final text file.
-
-This approach avoids API size limits and improves reliability when processing long recordings.
-
----
-
-# Example Command
-
-```bash
-python transcribe_folder.py ./conference_recordings --lang auto
+```text
+[00:00] Speaker A: Bonjour, on commence la réunion.
+[00:04] Speaker B: Parfait, merci.
+[01:05] Speaker A: Premier point à l'ordre du jour.
 ```
 
----
+The labels are deliberately anonymous. `Speaker A`, `Speaker B`, and so on
+are consistent within a single uploaded recording, but are not identities and
+are not guaranteed to refer to the same person in another file.
 
-# Possible Improvements
+## Large recordings
 
-Future enhancements could include:
+Every recording is sent in one request, which lets the diarization model keep
+speaker labels consistent across the whole file. Files at or below the OpenAI
+audio upload limit (25 MiB) are uploaded unchanged. Larger files are
+temporarily re-encoded by `ffmpeg` as mono 16 kHz AAC at a bitrate calculated
+to target the limit. If the prepared file is still too large, EchoScript fails
+that recording with an explicit error and continues with the remaining files.
 
-- Speaker detection
-- Timestamped transcripts
-- Automatic summaries of talks
-- Markdown output formatting
-- Keyword extraction
-- CLI progress visualization
+Temporary prepared audio is removed after a successful transcription. It is
+left in `transcripts/_prepared` on failure for troubleshooting.
 
----
+## Failure behavior
 
-# License
+Temporary OpenAI API or network failures are retried three times with
+increasing delays. Invalid requests, authentication errors, audio-preparation
+errors, and filesystem errors fail immediately. The command reports all failed
+recordings and exits with a non-zero status if any recording failed.
+
+## License
 
 MIT License
