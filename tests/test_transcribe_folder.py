@@ -47,6 +47,7 @@ class ApiAndRenderingTests(unittest.TestCase):
         client = MagicMock()
         client.audio.transcriptions.create.return_value = SimpleNamespace(segments=[
             SimpleNamespace(start=0.2, speaker="speaker_0", text=" Bonjour."),
+            SimpleNamespace(start=10.5, speaker="speaker_0", text="La réunion peut commencer."),
             SimpleNamespace(start=65.9, speaker="speaker_1", text="Salut !"),
             SimpleNamespace(start=130, speaker="speaker_0", text="À bientôt."),
         ])
@@ -57,7 +58,8 @@ class ApiAndRenderingTests(unittest.TestCase):
         self.assertNotIn("language", client.audio.transcriptions.create.call_args.kwargs)
         self.assertEqual(
             transcribe_folder.format_diarized_transcript(result),
-            "[00:00] Speaker A: Bonjour.\n[01:05] Speaker B: Salut !\n[02:10] Speaker A: À bientôt.",
+            "[00:00] Speaker A: Bonjour.\n[00:10] La réunion peut commencer.\n"
+            "\n[01:05] Speaker B: Salut !\n\n[02:10] Speaker A: À bientôt.",
         )
 
 

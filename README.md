@@ -56,6 +56,8 @@ looks like this:
 
 ```text
 [00:00] Speaker A: Bonjour, on commence la réunion.
+[00:02] Je vais présenter le premier point.
+
 [00:04] Speaker B: Parfait, merci.
 [01:05] Speaker A: Premier point à l'ordre du jour.
 ```

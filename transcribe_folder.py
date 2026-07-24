@@ -145,6 +145,7 @@ def format_diarized_transcript(result: Any) -> str:
 
     speakers: dict[str, str] = {}
     lines: list[str] = []
+    previous_speaker: str | None = None
     for segment in segments:
         raw_speaker = segment_value(segment, "speaker")
         text = segment_value(segment, "text")
@@ -155,7 +156,11 @@ def format_diarized_transcript(result: Any) -> str:
         label = speakers.setdefault(key, speaker_label(len(speakers)))
         total_seconds = max(0, int(float(start)))
         timestamp = f"{total_seconds // 60:02d}:{total_seconds % 60:02d}"
-        lines.append(f"[{timestamp}] {label}: {str(text).strip()}")
+        if previous_speaker is not None and key != previous_speaker:
+            lines.append("")
+        prefix = f"{label}: " if key != previous_speaker else ""
+        lines.append(f"[{timestamp}] {prefix}{str(text).strip()}")
+        previous_speaker = key
     return "\n".join(lines)
 
 
