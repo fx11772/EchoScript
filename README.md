@@ -51,8 +51,12 @@ support prompts.
 
 ## Output
 
-Files are written to `transcripts/<recording-name>.txt` by default. A file
-looks like this:
+Each successful recording creates two files by default:
+
+- `transcripts/<recording-name>.txt`: the timestamped transcript.
+- `transcripts/readable/<recording-name>.md`: a Markdown version for reading.
+
+The timestamped file looks like this:
 
 ```text
 [00:00] Speaker A: Bonjour, on commence la réunion.
@@ -62,21 +66,41 @@ looks like this:
 [01:05] Speaker A: Premier point à l'ordre du jour.
 ```
 
+The readable Markdown version groups consecutive segments from each speaker,
+keeps the anonymous labels, and omits timestamps:
+
+```md
+# talk1
+
+## Speaker A
+
+Bonjour, on commence la réunion. Je vais présenter le premier point.
+
+## Speaker B
+
+Parfait, merci.
+```
+
 The labels are deliberately anonymous. `Speaker A`, `Speaker B`, and so on
 are consistent within a single uploaded recording, but are not identities and
 are not guaranteed to refer to the same person in another file.
 
 ## Large recordings
 
-Every recording is sent in one request, which lets the diarization model keep
-speaker labels consistent across the whole file. Files at or below the OpenAI
+Recordings of at most 23 minutes are sent in one request, which lets the
+diarization model keep speaker labels consistent across the whole file. Longer
+recordings are split automatically into parts of about 23 minutes before being
+sent. Their timestamps remain aligned with the original recording, but speaker
+labels are anonymous and not guaranteed to refer to the same person across part
+boundaries. Files at or below the OpenAI
 audio upload limit (25 MiB) are uploaded unchanged. Larger files are
 temporarily re-encoded by `ffmpeg` as mono 16 kHz AAC at a bitrate calculated
 to target the limit. If the prepared file is still too large, EchoScript fails
 that recording with an explicit error and continues with the remaining files.
 
-Temporary prepared audio is removed after a successful transcription. It is
-left in `transcripts/_prepared` on failure for troubleshooting.
+Temporary prepared audio and long-recording parts are removed after a successful
+transcription. They are left in `transcripts/_prepared` and `transcripts/_parts`
+on failure for troubleshooting.
 
 ## Failure behavior
 

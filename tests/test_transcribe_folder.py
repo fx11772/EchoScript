@@ -62,6 +62,51 @@ class ApiAndRenderingTests(unittest.TestCase):
             "\n[01:05] Speaker B: Salut !\n\n[02:10] Speaker A: À bientôt.",
         )
 
+    def test_readable_markdown_groups_consecutive_segments_without_timestamps(self):
+        result = SimpleNamespace(segments=[
+            SimpleNamespace(start=0, speaker="speaker_0", text="Bonjour."),
+            SimpleNamespace(start=10, speaker="speaker_0", text="On commence."),
+            SimpleNamespace(start=20, speaker="speaker_1", text="Très bien."),
+            SimpleNamespace(start=30, speaker="speaker_0", text="Continuons."),
+        ])
+
+        self.assertEqual(
+            transcribe_folder.format_readable_transcript(result, "réunion"),
+            "# réunion\n\n## Speaker A\n\nBonjour. On commence.\n\n"
+            "## Speaker B\n\nTrès bien.\n\n## Speaker A\n\nContinuons.",
+        )
+
+    def test_transcribe_file_writes_timestamped_and_readable_outputs(self):
+        result = SimpleNamespace(segments=[
+            SimpleNamespace(start=0, speaker="speaker_0", text="Bonjour."),
+        ])
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            audio_path = root / "meeting.m4a"
+            audio_path.write_bytes(b"audio")
+            out_dir = root / "transcripts"
+            with patch.object(transcribe_folder, "split_audio_for_diarization", return_value=([(audio_path, 0.0)], False)), patch.object(
+                transcribe_folder, "transcribe_audio_with_retry", return_value=result
+            ):
+                transcribe_folder.transcribe_file(object(), audio_path, out_dir, "auto", None)
+
+            self.assertEqual((out_dir / "meeting.txt").read_text(encoding="utf-8"), "[00:00] Speaker A: Bonjour.")
+            self.assertEqual(
+                (out_dir / "readable" / "meeting.md").read_text(encoding="utf-8"),
+                "# meeting\n\n## Speaker A\n\nBonjour.",
+            )
+
+    def test_long_recording_parts_are_offset_and_use_distinct_speaker_labels(self):
+        first_part = SimpleNamespace(segments=[SimpleNamespace(start=1, speaker="speaker_0", text="Début.")])
+        second_part = SimpleNamespace(segments=[SimpleNamespace(start=2, speaker="speaker_0", text="Suite.")])
+
+        result = transcribe_folder.combine_diarized_results([(first_part, 0.0), (second_part, 1390.0)])
+
+        self.assertEqual(
+            transcribe_folder.format_diarized_transcript(result),
+            "[00:01] Speaker A: Début.\n\n[23:12] Speaker B: Suite.",
+        )
+
 
 class PreparationTests(unittest.TestCase):
     def test_acceptable_file_is_used_directly(self):
@@ -110,6 +155,29 @@ class PreparationTests(unittest.TestCase):
             ):
                 with self.assertRaisesRegex(transcribe_folder.AudioPreparationError, "still too large"):
                     transcribe_folder.prepare_audio_for_upload(source, root / "prepared")
+
+    def test_long_recording_is_split_for_diarization(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            source = root / "meeting.m4a"
+            source.write_bytes(b"audio")
+            workdir = root / "parts"
+
+            def fake_run(_command, **_kwargs):
+                workdir.mkdir(exist_ok=True)
+                (workdir / "meeting.part_000.m4a").write_bytes(b"first")
+                (workdir / "meeting.part_001.m4a").write_bytes(b"second")
+                return subprocess.CompletedProcess([], 0, "", "")
+
+            with patch.object(transcribe_folder, "audio_duration_seconds", side_effect=[1556.0, 1395.0, 161.0]), patch.object(
+                transcribe_folder.subprocess, "run", side_effect=fake_run
+            ):
+                parts, temporary = transcribe_folder.split_audio_for_diarization(source, workdir)
+
+            self.assertTrue(temporary)
+            self.assertEqual([(path.name, offset) for path, offset in parts], [
+                ("meeting.part_000.m4a", 0.0), ("meeting.part_001.m4a", 1395.0),
+            ])
 
 
 class RetryAndBatchTests(unittest.TestCase):

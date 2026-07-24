@@ -15,6 +15,11 @@ RETRY_DELAYS_SECONDS = (1, 2, 4)
 # little room below that limit when creating an AAC container.
 MAX_UPLOAD_BYTES = 25 * 1024 * 1024
 TARGET_UPLOAD_BYTES = 24 * 1024 * 1024
+# The diarization model currently accepts at most 1,400 seconds per request.
+MAX_API_DIARIZATION_SECONDS = 1_400
+# Keep a ten-second margin when asking ffmpeg to segment. AAC frame timing can
+# still make a produced part a few milliseconds longer than this target.
+DIARIZATION_SEGMENT_SECONDS = 1_390
 PROJECT_ROOT = Path(__file__).resolve().parent
 ENV_FILE = PROJECT_ROOT / ".env"
 
@@ -88,6 +93,48 @@ def prepare_audio_for_upload(audio_path: Path, workdir: Path) -> tuple[Path, boo
             f"limit: {MAX_UPLOAD_BYTES} bytes)."
         )
     return prepared_path, True
+
+
+def split_audio_for_diarization(audio_path: Path, workdir: Path) -> tuple[list[tuple[Path, float]], bool]:
+    """Split recordings exceeding the model duration limit into uploadable parts."""
+    duration = audio_duration_seconds(audio_path)
+    if duration <= MAX_API_DIARIZATION_SECONDS:
+        return [(audio_path, 0.0)], False
+
+    workdir.mkdir(parents=True, exist_ok=True)
+    part_pattern = workdir / f"{audio_path.stem}.part_%03d.m4a"
+    for stale_part in workdir.glob(f"{audio_path.stem}.part_*.m4a"):
+        try:
+            stale_part.unlink()
+        except OSError as exc:
+            raise AudioPreparationError(f"Could not replace temporary part {stale_part.name}: {exc}") from exc
+    try:
+        subprocess.run(
+            [
+                "ffmpeg", "-y", "-i", str(audio_path), "-vn", "-map", "0:a", "-f", "segment",
+                "-segment_time", str(DIARIZATION_SEGMENT_SECONDS), "-reset_timestamps", "1",
+                "-c:a", "aac", "-b:a", "64k", str(part_pattern),
+            ],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+    except (OSError, subprocess.CalledProcessError) as exc:
+        raise AudioPreparationError(f"Could not split {audio_path.name} for diarization: {exc}") from exc
+
+    paths = sorted(workdir.glob(f"{audio_path.stem}.part_*.m4a"))
+    if len(paths) < 2:
+        raise AudioPreparationError(f"Could not split {audio_path.name} into diarization parts.")
+
+    parts: list[tuple[Path, float]] = []
+    offset = 0.0
+    for path in paths:
+        part_duration = audio_duration_seconds(path)
+        if part_duration > MAX_API_DIARIZATION_SECONDS:
+            raise AudioPreparationError(f"Diarization part {path.name} exceeds the duration limit.")
+        parts.append((path, offset))
+        offset += part_duration
+    return parts, True
 
 
 def transcribe_audio(client: OpenAI, audio_path: Path, lang: str | None) -> Any:
@@ -164,12 +211,70 @@ def format_diarized_transcript(result: Any) -> str:
     return "\n".join(lines)
 
 
+def format_readable_transcript(result: Any, title: str) -> str:
+    """Render consecutive segments from one speaker as a readable Markdown turn."""
+    segments = segment_value(result, "segments")
+    if not segments:
+        raise TranscriptionError("The API returned no diarized segments.")
+
+    speakers: dict[str, str] = {}
+    turns: list[tuple[str, list[str]]] = []
+    for segment in segments:
+        raw_speaker = segment_value(segment, "speaker")
+        text = segment_value(segment, "text")
+        if raw_speaker is None or text is None:
+            raise TranscriptionError("The API returned an invalid diarized segment.")
+        key = str(raw_speaker)
+        label = speakers.setdefault(key, speaker_label(len(speakers)))
+        if not turns or turns[-1][0] != label:
+            turns.append((label, []))
+        turns[-1][1].append(str(text).strip())
+
+    parts = [f"# {title}"]
+    for label, texts in turns:
+        parts.append(f"## {label}\n\n{' '.join(texts)}")
+    return "\n\n".join(parts)
+
+
+def combine_diarized_results(results: list[tuple[Any, float]]) -> dict[str, list[dict[str, Any]]]:
+    """Offset timestamps and isolate anonymous speaker labels for each API request."""
+    segments: list[dict[str, Any]] = []
+    for part_number, (result, offset) in enumerate(results, start=1):
+        part_segments = segment_value(result, "segments")
+        if not part_segments:
+            raise TranscriptionError("The API returned no diarized segments.")
+        for segment in part_segments:
+            speaker = segment_value(segment, "speaker")
+            text = segment_value(segment, "text")
+            start = segment_value(segment, "start")
+            if speaker is None or text is None or start is None:
+                raise TranscriptionError("The API returned an invalid diarized segment.")
+            segments.append({
+                "speaker": f"part_{part_number}:{speaker}",
+                "start": float(start) + offset,
+                "text": text,
+            })
+    return {"segments": segments}
+
+
 def cleanup_prepared_audio(prepared_path: Path, workdir: Path) -> None:
     try:
         prepared_path.unlink(missing_ok=True)
         workdir.rmdir()
     except OSError:
         # Keep files if cleanup fails, or if another recording still has one.
+        pass
+
+
+def cleanup_diarization_parts(parts: list[tuple[Path, float]], workdir: Path) -> None:
+    for path, _ in parts:
+        try:
+            path.unlink(missing_ok=True)
+        except OSError as exc:
+            print(f"Warning: could not remove temporary diarization part {path}: {exc}")
+    try:
+        workdir.rmdir()
+    except OSError:
         pass
 
 
@@ -181,11 +286,22 @@ def transcribe_file(client: OpenAI, audio_path: Path, out_dir: Path, lang_mode: 
     prepared_path, is_temporary = prepare_audio_for_upload(audio_path, out_dir / "_prepared")
     if is_temporary:
         print(f"  Re-encoded oversized file for upload: {prepared_path.name}")
-    result = transcribe_audio_with_retry(client, prepared_path, lang)
+    parts, are_temporary = split_audio_for_diarization(prepared_path, out_dir / "_parts")
+    if are_temporary:
+        print(f"  Split long recording into {len(parts)} diarization part(s)")
+    results = [(transcribe_audio_with_retry(client, path, lang), offset) for path, offset in parts]
+    result = combine_diarized_results(results)
     transcript = format_diarized_transcript(result)
+    readable_transcript = format_readable_transcript(result, audio_path.stem)
     out_path = out_dir / f"{audio_path.stem}.txt"
+    readable_path = out_dir / "readable" / f"{audio_path.stem}.md"
     out_path.write_text(transcript, encoding="utf-8")
+    readable_path.parent.mkdir(parents=True, exist_ok=True)
+    readable_path.write_text(readable_transcript, encoding="utf-8")
     print(f"Saved: {out_path}")
+    print(f"Saved: {readable_path}")
+    if are_temporary:
+        cleanup_diarization_parts(parts, (out_dir / "_parts"))
     if is_temporary:
         cleanup_prepared_audio(prepared_path, prepared_path.parent)
 
