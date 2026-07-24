@@ -60,7 +60,7 @@ source venv/bin/activate
 Install dependencies:
 
 ```bash
-pip install openai pydub
+pip install -r requirements.txt
 ```
 
 Install ffmpeg (required for audio processing):
@@ -73,19 +73,28 @@ brew install ffmpeg
 
 # Setup
 
-Set your OpenAI API key as an environment variable.
+Create your local configuration file from the provided template:
 
 macOS / Linux:
 
 ```bash
-export OPENAI_API_KEY="your_api_key_here"
+cp .env.example .env
 ```
 
 Windows (PowerShell):
 
 ```powershell
-setx OPENAI_API_KEY "your_api_key_here"
+Copy-Item .env.example .env
 ```
+
+Then open `.env` and set your key:
+
+```dotenv
+OPENAI_API_KEY="your_api_key_here"
+```
+
+EchoScript reads the key only from the project `.env` file. This file is
+ignored by Git; never commit or share it.
 
 ---
 

@@ -17,8 +17,10 @@ def load_module():
     openai.RateLimitError = type("RateLimitError", (Exception,), {})
     pydub = types.ModuleType("pydub")
     pydub.AudioSegment = object
+    dotenv = types.ModuleType("dotenv")
+    dotenv.dotenv_values = lambda _path: {}
 
-    with patch.dict(sys.modules, {"openai": openai, "pydub": pydub}):
+    with patch.dict(sys.modules, {"openai": openai, "pydub": pydub, "dotenv": dotenv}):
         spec = importlib.util.spec_from_file_location(
             "transcribe_folder", Path(__file__).parents[1] / "transcribe_folder.py"
         )
@@ -170,7 +172,7 @@ class BatchFailureTests(unittest.TestCase):
                 if audio_path.name == "failed.m4a":
                     raise RuntimeError("unavailable")
 
-            with patch.dict(os.environ, {"OPENAI_API_KEY": "test"}), patch.object(
+            with patch.object(transcribe_folder, "dotenv_values", return_value={"OPENAI_API_KEY": "test"}), patch.object(
                 sys, "argv", ["transcribe_folder.py", str(input_dir), "--out", str(out_dir)]
             ), patch.object(transcribe_folder, "OpenAI", return_value=object()), patch.object(
                 transcribe_folder, "transcribe_file", side_effect=transcribe_side_effect
@@ -179,6 +181,40 @@ class BatchFailureTests(unittest.TestCase):
 
             self.assertEqual(result, 1)
             self.assertEqual(transcribe.call_count, 2)
+
+    def test_main_reads_key_from_dotenv_file(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            input_dir = root / "input"
+            input_dir.mkdir()
+            (input_dir / "meeting.m4a").write_bytes(b"audio")
+
+            with patch.object(transcribe_folder, "dotenv_values", return_value={"OPENAI_API_KEY": "from-dotenv"}), patch.object(
+                sys, "argv", ["transcribe_folder.py", str(input_dir)]
+            ), patch.object(transcribe_folder, "OpenAI", return_value=object()) as openai_client, patch.object(
+                transcribe_folder, "transcribe_file"
+            ):
+                result = transcribe_folder.main()
+
+            self.assertEqual(result, 0)
+            openai_client.assert_called_once_with(api_key="from-dotenv", max_retries=0)
+
+    def test_main_rejects_shell_key_when_dotenv_key_is_missing(self):
+        with patch.dict(os.environ, {"OPENAI_API_KEY": "shell-key"}, clear=True), patch.object(
+            transcribe_folder, "dotenv_values", return_value={}
+        ), patch.object(sys, "argv", ["transcribe_folder.py", "unused"]), patch.object(
+            transcribe_folder, "OpenAI"
+        ) as openai_client:
+            result = transcribe_folder.main()
+
+        self.assertEqual(result, 1)
+        openai_client.assert_not_called()
+
+    def test_load_api_key_rejects_blank_dotenv_value(self):
+        with patch.object(transcribe_folder, "dotenv_values", return_value={"OPENAI_API_KEY": "  "}):
+            api_key = transcribe_folder.load_api_key()
+
+        self.assertIsNone(api_key)
 
 
 if __name__ == "__main__":

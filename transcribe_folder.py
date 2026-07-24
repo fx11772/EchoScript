@@ -1,18 +1,26 @@
-import os
 import sys
 import argparse
 import time
 from pathlib import Path
+from dotenv import dotenv_values
 from openai import APIConnectionError, APIStatusError, APITimeoutError, OpenAI, RateLimitError
 from pydub import AudioSegment
 
 CHUNK_MINUTES = 10
 SUPPORTED_EXTS = {".m4a", ".mp3", ".wav", ".aac", ".webm", ".mp4"}
 RETRY_DELAYS_SECONDS = (1, 2, 4)
+PROJECT_ROOT = Path(__file__).resolve().parent
+ENV_FILE = PROJECT_ROOT / ".env"
 
 
 class ChunkTranscriptionError(RuntimeError):
     """Raised when a chunk cannot be transcribed after the allowed attempts."""
+
+
+def load_api_key() -> str | None:
+    """Return the OpenAI API key configured in the project .env file only."""
+    api_key = dotenv_values(ENV_FILE).get("OPENAI_API_KEY")
+    return api_key.strip() if isinstance(api_key, str) and api_key.strip() else None
 
 def split_audio_to_chunks(audio_path: Path, workdir: Path) -> list[Path]:
     audio = AudioSegment.from_file(str(audio_path))
@@ -122,9 +130,12 @@ def main() -> int:
                         help="Optional context: names/acronyms to improve accuracy")
     args = parser.parse_args()
 
-    api_key = os.getenv("OPENAI_API_KEY")
+    api_key = load_api_key()
     if not api_key:
-        print("Missing OPENAI_API_KEY environment variable.")
+        print(
+            f"Missing OPENAI_API_KEY in {ENV_FILE}. "
+            "Copy .env.example to .env and add your API key."
+        )
         return 1
 
     in_dir = Path(args.folder).expanduser().resolve()
